@@ -15,7 +15,7 @@ The analysis uses R with several key packages:
 
 The data comes from TeleGeography’s submarine cable database and GeoBoundaries’ country shapes. I converted the cable routes into a network with countries as nodes and cable connections as edges, and then applied standard network analysis techniques.
 ## Key Files
-1. Full interactive report：reports/submarine-cable-network-analysis.html
+1. Full interactive report：reports/submarine-cable-network-analysis.html：Download the HTML file and open it in a modern web browser to view the complete interactive analysis report
 2. All generated charts and maps： figures/
 3. Raw cable and country boundary data：
 
@@ -36,4 +36,4 @@ The HTML report shows all results with interactive maps and reports.
 ## Why This Matters 
 Understanding submarine cable networks is crucial for telecommunications planning, cybersecurity risk assessment, and international policy. These cables carry 99% of international data traffic, making them critical infrastructure. The analysis reveals how dependent global communications are on a small number of key countries and transit points.
 
--Analysis completed as part of Geographic Data Science coursework at University of Bristol
+### Analysis completed as part of MSc Geographic Data Science and Spatial Analytics program at the University of Bristol.
