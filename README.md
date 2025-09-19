@@ -16,8 +16,10 @@ The analysis uses R with several key packages:
 The data comes from TeleGeography’s submarine cable database and GeoBoundaries’ country shapes. I converted the cable routes into a network with countries as nodes and cable connections as edges, and then applied standard network analysis techniques.
 ## Key Files
 1. Full interactive report：reports/submarine-cable-network-analysis.html：Download the HTML file and open it in a modern web browser to view the complete interactive analysis report
-2. All generated charts and maps： figures/
-3. Raw cable and country boundary data：
+2. Main analysis with all calculations and visualizations：code/Submarine_cables_network_tech.Rmd
+
+3. All generated charts and maps： figures/
+4. Raw cable and country boundary data：
 
 Submarine Cable data: https://web.archive.org/web/20220325095548/https:/raw.githubusercontent.com/telegeography/www.submarinecablemap.com/master/web/public/api/v3/cable/cable-geo.json
 
