@@ -1,0 +1,1015 @@
+---
+title: "Complex Network Analysis of Global Submarine Cable Systems: Structure, Communities and Vulnerability"
+author: "JingMa"
+date: "2024-10-28"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    theme: cerulean
+    highlight: tango
+bibliography: "./data/reference.bib"
+csl: "./data/apa-5th-edition.csl"
+link-citations: true
+---
+
+# 3.Data Presentation
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, paged.print=TRUE}
+# Load packages
+library(sf)
+library(kableExtra)
+library(igraph)
+library(knitr)
+library(corrplot)
+library(tidyverse)
+library(geojsonio)
+library(stplanr)
+library(leaflet)
+library(rprojroot)
+library(dplyr)
+library(tmap)
+library(ggplot2)
+library(gridExtra)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+# Download the cable data and save it as cables.geojson
+download.file("https://web.archive.org/web/20220325095548/https:/raw.githubusercontent.com/telegeography/www.submarinecablemap.com/master/web/public/api/v3/cable/cable-geo.json",
+              destfile = "data/cables.geojson")
+
+# Download the landing points data and save it as points.geojson
+download.file("https://web.archive.org/web/20220325095548/https:/raw.githubusercontent.com/telegeography/www.submarinecablemap.com/master/web/public/api/v3/landing-point/landing-point-geo.json",
+              destfile = "data/points.geojson")
+
+
+
+```
+
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+# Read the cables data
+cables <- st_read("data/cables.geojson")
+
+# Read the landing points data
+points <- st_read("data/points.geojson")
+
+
+```
+
+```{r message=FALSE, warning=FALSE}
+# Check the cables data
+x_html <- knitr:: kable(head(cables), "html", caption = "Table 1.Global submarine cables data")
+kableExtra::kable_styling(x_html,bootstrap_options = "striped",
+ full_width = 200,position = "left")
+```
+
+```{r message=FALSE, warning=FALSE}
+# Check the landing points data
+x_html <- knitr:: kable(head(points), "html",caption = "Table 2.landing points data")
+kableExtra::kable_styling(x_html,bootstrap_options = "striped",
+ full_width = T)
+```
+
+```{r eval=FALSE, include=FALSE}
+# Check for missing values in 'points'
+print(colSums(is.na(points)))
+
+# Check for missing values in 'cables'
+print(colSums(is.na(cables)))
+
+```
+This image[Fig.1](figure/1.png) displays the global submarine cable routes and their associated landing points. Regions such as Europe, the Middle East, and East Asia exhibit dense networks of cables and landing points. In contrast, areas like parts of Africa and the Pacific show fewer connections, reflecting lower connectivity or dependence on a smaller number of cable systems.
+```{r message=FALSE, warning=FALSE}
+library(rnaturalearth)
+library(rnaturalearthdata)
+# loding accurate world map from returnclass package
+world <- ne_countries(scale = "medium", returnclass = "sf")
+# Create actual cable routes map
+ggplot() +
+  # Add base map (countries)
+  geom_sf(data = world, 
+          fill = "lightblue", 
+          color = "white") +
+  # Add actual cable routes
+  geom_sf(data = cables,
+          color = "orange",
+          size = 0.5,
+          alpha = 0.6) +
+  # Add landing points
+  geom_sf(data = points,
+          size = 0.5,
+          color = "black") +
+  # Theme and labels
+  theme_minimal() +
+  labs(
+    title = "Global Submarine Cable Routes and Landing Points",
+    subtitle = "Actual cable paths and their landing locations",
+    caption = "Source: TeleGeography's Submarine Cable Map"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "none",
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  ) +
+  coord_sf(crs = st_crs(4326))
+```
+
+Fig.1.Global Submarine Cable Routes and Landing Points
+
+From this website [Access to global administrative boundaries](https://www.geoboundaries.org/globalDownloads.html)get countries boundaries data.
+```{r echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+# loading geo_boundaries data
+file_path <- "./data/geoBoundariesCGAZ_ADM0.geojson"
+geo_boundaries <- st_read(file_path)
+
+
+```
+## 3.4.Data processing
+
+```{r message=FALSE, warning=FALSE}
+#Ensure Consistent Coordinate Reference Systems (CRS)
+# Transform landing points to match countries' CRS
+points <- st_transform(points, st_crs(geo_boundaries))
+# Transform cables to match countries' CRS
+cables <- st_transform(cables, st_crs(geo_boundaries))
+
+```
+
+
+```{r}
+# Check which geometries are invalid
+invalid_geometries <- st_is_valid(geo_boundaries)
+print(table(invalid_geometries))  # Count valid and invalid geometries
+```
+From the checking result, the geo_boundaries dataset contains 3 invalid geometric information, these invalid geometric information may lead to the next spatial connection problem.
+
+```{r}
+#Correct invalid geometries(might arise due to issues like self-intersecting polygons or missing coordinates) in the dataset.
+#fix any invalid geometries
+geo_boundaries <- st_make_valid(geo_boundaries)
+
+```
+
+```{r}
+# Check which geometries are valid
+invalid_geometries <- st_is_valid(geo_boundaries) 
+# Summarize the number of valid and invalid geometries
+print(table(invalid_geometries))
+```
+
+```{r}
+#Matches each point to its corresponding country boundary using a spatial join.
+#join points and country boundary data
+points_with_country <- st_join(points, geo_boundaries["shapeName"]) 
+head(points_with_country)
+```
+```{r}
+#Quantifies the points that could not be matched to any country.
+#check the number of missing values
+na_count <- sum(is.na(points_with_country$shapeName))
+print(paste("Number of unmatched points:", na_count))
+
+```
+
+```{r}
+library(rnaturalearth)
+library(rnaturalearthdata)
+# loding accurate world map from returnclass package
+world <- ne_countries(scale = "medium", returnclass = "sf")
+unmatched_points <- points_with_country %>%
+  filter(is.na(shapeName))
+
+plot(st_geometry(world), col = "lightblue", reset = FALSE)
+plot(st_geometry(unmatched_points), col = "red", pch = 20, add = TRUE)
+
+```
+
+Fig.2.Visualisation of missing data in spatial connectivity.
+
+As shown in[Fig.2](figure/2.png), I found that 163 out of 1,335 landing points (12.2%) couldn't be matched to any country in our dataset. These unmatched points were mostly located just outside country borders or in offshore areas. Through careful checking, I found that these are typically additional landing points for cables that we've already captured through other matched points in our dataset. This means that even without these points, we still maintain the essential cable connections between countries in our network structure.
+
+
+```{r}
+# Remove missing values and modify the original variable directly
+points_with_country <- points_with_country %>%
+  filter(!is.na(shapeName)) 
+```
+
+```{r}
+#match the cables and points_with_country data
+cable_point_matches <- points_with_country %>%
+  filter(!is.na(shapeName)) %>%  
+  st_join(
+    cables,
+    join = st_nearest_feature,
+    multiple = TRUE
+  ) %>%
+  select(
+    cable_id = id.y,      
+    cable_name = name.y,  
+    point_id = id.x,         
+    point_name = name.x,    
+    country = shapeName,   
+    geometry 
+  )
+```
+
+
+
+
+```{r}
+# Check cable and state connections
+print("check the number of countries connected by each cable：")
+cable_point_matches %>%
+  group_by(cable_id) %>%
+  summarise(
+    num_countries = n_distinct(country),
+    countries = paste(sort(unique(country)), collapse = ", ")
+  ) %>%
+  arrange(desc(num_countries)) %>%
+  head(10)
+```
+Submarine cables connect multiple landing points across different countries. To analyze international connections, we identified cables linking different countries and filtered out domestic cables. This organizes the data to show which countries are connected by each cable.
+```{r}
+# Create groups of submarine cables with their connected countries
+cable_country_groups <- cable_point_matches %>%
+  group_by(cable_id, cable_name) %>%
+  summarise(
+    countries = list(sort(unique(country))),
+    num_countries = n_distinct(country)
+  )
+```
+```{r}
+head(cable_country_groups)
+```
+These cables need to be removed before network analysis, as our purpose is to study the connection relationships between nodes (countries). Cables that only connect points within a single country cannot form international connection relationships (edges). Since these single-country cables are purely for domestic communication, they would not contribute to our analysis of international network connectivity.
+```{r}
+# Remove cables that only connect to one country
+cable_country_groups_filtered <- cable_country_groups %>%
+  filter(num_countries >= 2)
+
+# Check the filtering results
+print("Before filtering:")
+print(paste("Total cables:", nrow(cable_country_groups)))
+print(paste("Cables with single country:", sum(cable_country_groups$num_countries == 1)))
+
+print("\nAfter filtering:")
+print(paste("Remaining cables:", nrow(cable_country_groups_filtered)))
+
+# Calculate total number of unique countries in the network
+total_countries <- cable_country_groups_filtered %>%
+  unnest(countries) %>%
+  pull(countries) %>%
+  unique() %>%
+  length()
+
+```
+From the results, there are a total of 418 submarine cables, of which 274 cables connect only one country and 144 cables connect multiple countries. So most of the undersea cables are domestic cables. Only about a third of the cables are international, and these are the ones we really need to focus on in our network analysis. 
+
+Due to the particularity of the submarine cable network, all countries on the same cable can directly exchange information with each other, so we need to create country pairs to represent this direct connection relationship.
+```{r}
+# Create all possible country pairs connected by each cable
+network_edges <- cable_country_groups_filtered %>%
+  unnest(countries) %>%
+  group_by(cable_id) %>%
+# Create all possible country pairs for each cable
+  summarise(
+    country_pairs = list(t(combn(unique(countries), 2))),
+    .groups = "drop"
+  ) %>%
+  unnest(country_pairs) %>%
+  # Create the final edge list with from-to format
+  transmute(
+    from = country_pairs[,1],
+    to = country_pairs[,2]
+  )
+```
+# 4.network analysis
+
+## 4.1.Analyse the basic size of submarine cable networks.
+
+In this part, we defined the network nodes(countries) and edges(Submarine cable connections between countries), the network consists of 129 countries connected by 681 cables, including 591 unique cables, which refers to the unique inter-country connections that actually exist in the network, and duplicate connections are not considered,existing Connection redundancy. It shows that the network coverage is wide, the network scale is large, and there is a certain degree of redundancy in the network, which contributes to the stability of the network.
+```{r}
+# Basic size of computing networks
+network_stats <- list(
+  total_nodes = cable_country_groups_filtered %>%
+    unnest(countries) %>%
+    pull(countries) %>%
+    unique() %>%
+    length(),
+    
+  total_cables = cable_country_groups_filtered %>%
+    nrow()
+)
+
+# Calculate the number of actual edges
+edge_stats <- network_edges %>%
+  summarise(
+    total_edges = n(),
+    unique_edges = n_distinct(paste(pmin(from, to), pmax(from, to)))
+  )
+
+# print basic information
+print("Basic size of the network:")
+print(paste("Number of nodes (total number of unique countries):", network_stats$total_nodes))
+print(paste("total cables:", network_stats$total_cables))
+print(paste("total edges:", edge_stats$total_edges))
+print(paste("unique edges:", edge_stats$unique_edges))
+
+
+```
+Taking the number of cable connections as weights, a table containing the starting point, end point and weight of the cable is calculated.
+```{r}
+# Calculate weights based on connections between country pairs
+weighted_edges <- network_edges %>%
+  # just choose from and to
+  select(from, to) %>%
+  # Ensure consistent direction
+  mutate(
+    from_norm = pmin(from, to),
+    to_norm = pmax(from, to)
+  ) %>%
+  # Calculate weights
+  group_by(from_norm, to_norm) %>%
+  summarise(
+    weight = n(),
+    .groups = "drop"
+  ) %>%
+  # Restore column names
+  rename(from = from_norm, to = to_norm)
+
+# Check the result - should only have 3 columns: from, to, weight
+print(head(weighted_edges))
+
+```
+After obtaining the country pairs from the dataset, we will now convert the country pairs (weighted_edges) into spatial data to facilitate visualization.
+
+```{r}
+# Create spatial lines with weights
+edges_sf_lines <- weighted_edges %>%
+  # Add coordinates for starting points (from country centers)
+  left_join(
+    st_coordinates(st_centroid(geo_boundaries)) %>%
+    as.data.frame() %>%
+    cbind(country = geo_boundaries$shapeName),
+    by = c("from" = "country")
+  ) %>%
+  # Add coordinates for ending points (to country centers)
+  left_join(
+    st_coordinates(st_centroid(geo_boundaries)) %>%
+    as.data.frame() %>%
+    cbind(country = geo_boundaries$shapeName),
+    by = c("to" = "country")
+  ) %>%
+  # Create LINESTRING geometry
+  mutate(geometry = map2(
+    map2(X.x, Y.x, ~c(.x, .y)),
+    map2(X.y, Y.y, ~c(.x, .y)),
+    ~st_linestring(matrix(c(.x, .y), ncol=2, byrow=TRUE))
+  ) %>%
+    st_sfc(crs = st_crs(geo_boundaries))
+  ) %>%
+  st_sf()
+
+# Check the result
+print(head(edges_sf_lines))
+
+```
+
+[Fig.3](figure/3.png) shows the spatial mapping of the global submarine cable network. From the figure,we can see that submarine cable networks are very dense in parts of Europe, the Middle East, and East Asia. However, the global distribution of submarine cables is noticeably uneven, with inland countries or less developed regions having significantly fewer connections in comparison.
+
+
+```{r}
+# Create the map visualization
+ggplot() +
+  # Add base map
+  geom_sf(data = world, 
+          fill = "lightblue", 
+          color = "white") +
+  # Add weighted connections
+  geom_sf(data = edges_sf_lines,
+          aes(color = weight),
+          alpha = 0.7) +
+  # Color scale
+  scale_color_gradientn(
+    colors = c("darkgreen", "yellow", "orange", "red"),
+    name = "Number of Connections",
+    breaks = c(2, 4, 6, 8),
+    limits = c(1, 8)
+  ) +
+  # Size scale
+  scale_size_continuous(
+    name = "Number of Connections",
+    range = c(0.3, 2),
+    breaks = c(2, 4, 6, 8)
+  ) +
+  # Theme and labels
+  theme_minimal() +
+  labs(
+    title = "Country-level Submarine Cable Connections",
+    subtitle = "Connection weights based on number of cables between countries",
+    caption = "Source: TeleGeography's Submarine Cable Map"
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "bottom",
+    legend.box = "vertical",
+    axis.text = element_blank(),
+    axis.ticks = element_blank()
+  ) +
+  coord_sf(crs = st_crs(4326))
+```
+
+Fig.3. Country-level Submarine Cable Connections
+```{r}
+
+# Create igraph object from weighted edges
+network_graph <- graph_from_data_frame(
+  d = weighted_edges %>% select(from, to, weight),
+  directed = FALSE  
+)
+```
+
+
+```{r echo=FALSE, results='hide', message=FALSE, warning=FALSE}
+# Calculate network properties
+network_properties <- list(
+  # |V| Number of nodes (vertices)
+  V = vcount(network_graph),
+  
+  # |E| Number of edges
+  E = ecount(network_graph),
+  
+  # Largest component (all nodes)
+  largest_component = components(network_graph)$csize[1],
+  
+  # Δ(G) Maximum degree
+  max_degree = max(degree(network_graph)),
+  
+  # Edge density
+  edge_density = edge_density(network_graph),
+  
+  # Average path length
+  avg_distance = mean_distance(network_graph),
+  
+  # Diameter
+  diameter = diameter(network_graph),
+  
+  # Largest clique (maximum complete subgraph)
+  max_clique = length(largest_cliques(network_graph)[[1]])
+)
+
+# Check the calculated properties
+print(network_properties)
+```
+However, due to the large number of nodes and edges, visual analysis is quite challenging, making it difficult to precisely analyze the exact scale of the network. Therefore, it is very necessary to use mathematical network parameters, as shown in [Table 3].
+
+Based on the data in [Table 3], the network consists of 129 nodes (countries) and 591 edges (submarine cables and cable branches). The largest connected component includes all 129 nodes, indicating that the network has good connectivity. The edge density (the ratio of the actual number of connections to the possible maximum number of connections in the network) is only 7.16%, which means that the network is very loose and most nodes are not directly connected to each other. The average path length is 3.44 edges, indicating a relatively high level of connectivity across the network. The maximum diameter is 10 edges, meaning that even the farthest countries are at most separated by ten cables.
+
+One notable feature of the submarine cable network, unlike other networks, is its low edge density. This results from the geographical challenges of laying submarine cables, which requires significant effort and high costs. Moreover, international laws and maritime regulations can hinder cable deployment, and countries tend to prioritize connections with key economic partners or allies, leading to reduced overall edge density [@mcgeachy_changing_2022]. Additionally, technical limitations in cable design and data transmission contribute to the network's sparse connections [@kang_review_2024]. Overall, the network shows a characteristic of tight local connections while being loosely connected as a whole.
+
+
+```{r}
+# Create table for display
+metrics_table <- data.frame(
+   Metric = c("Nodes (V)", 
+             "Edges (E)",
+             "Largest Component",
+             "Δ(G)",
+             "Edge Density",
+             "Average Path Length",
+             "Diameter",
+             "Largest Clique"),
+  Value = c(network_properties$V,
+            network_properties$E,
+            network_properties$largest_component,
+            network_properties$max_degree,
+            sprintf("%.4f", network_properties$edge_density),
+            sprintf("%.2f", network_properties$avg_distance),
+            paste(network_properties$diameter, "edges"),
+            paste(network_properties$max_clique, "nodes"))
+)
+
+# Check the data frame
+print(metrics_table)
+```
+
+```{r}
+# Load required libraries
+library(knitr)
+library(kableExtra)
+
+# Create formatted table
+kable(metrics_table, 
+      caption = "Table 3.General Properties of Network Model",
+      col.names = c("Metric", "Value"),
+      align = c("l", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+
+## 4.2 Identify central nodes by centrality index
+
+Centrality measures in network analysis can assess whether edges and nodes are positioned at the center of paths, helping to evaluate the importance of a node[@marzo_selecting_2018]. Betweenness centrality measures a country's role as a transit point, specifically its ability to pass information between other countries in the network. The higher a node's betweenness centrality, the greater its ability to control the flow of information across the network[@zhang2022]. 
+
+Based on the analysis results in [Fig.4](figure/4.png) and [Table 4](), France and the United States lead in both centrality rankings, demonstrating their role as key hubs in the global communication network. Their advanced economies and technologies allow them to build more complex and redundant communication networks. Historically, the early establishment of transatlantic cables by the United States and other European countries also laid the foundation for their central positions in the global communication network[@ganz_submarine_2024].In terms of weighted degree centrality, countries like South Africa, Spain, and Italy follow closely behind, occupying leading positions within their respective regions. Egypt also ranks highly, which can be attributed to its strategic location. As a key transit country connecting Europe and East Asia, Egypt's high centrality reflects the crucial role of the Suez Canal in the global communication network. In terms of betweenness centrality, countries like Spain, the Netherlands, and Denmark have high values, indicating that they are not only important parts of their regional networks but also likely serve as key transit points for interregional communication.
+
+Comparing [Fig.4](figure/4.png), countries like Qatar and the UAE show high degree centrality but have relatively low betweenness centrality. This is because these countries have many direct submarine cable connections, which primarily serve the Middle East region. On the other hand, countries like the Netherlands, Japan, and Denmark, although ranking lower in degree centrality, rank higher in betweenness centrality. This indicates that their geographic location or strategic role makes them important bridges for communication flow. The Netherlands, in particular, has a favorable location as the "gateway to Europe," acting as a hub for communication between Europe and other continents.
+```{r}
+# Calculate two centrality metrics
+centrality_df <- data.frame(
+ country = V(network_graph)$name,
+ weighted_degree = strength(network_graph),
+ betweenness = betweenness(network_graph, normalized = TRUE)
+) %>%
+ # Round numbers to 4 decimal places
+ mutate(betweenness = round(betweenness, 4))
+
+# Get top 20 countries (sorted by each metric)
+top_20_strength <- centrality_df %>%
+ arrange(desc(weighted_degree)) %>%
+ head(20)
+
+top_20_betweenness <- centrality_df %>%
+ arrange(desc(betweenness)) %>%
+ head(20)
+
+```
+
+```{r}
+# Create top_20_strength table
+kable(top_20_strength, 
+      caption = "Table 4. Top 20 Countries by Weighted Degree Centrality",
+      col.names = c("country", "weighted_degree","betweenness"),
+      align = c("l", "r")) %>%
+  kable_styling(bootstrap_options = c("striped", "hover"))
+```
+
+```{r warning=FALSE}
+# Bar plot for Weighted Degree Centrality
+p1 <- ggplot(top_20_strength, aes(x = reorder(country, weighted_degree), y = weighted_degree)) +
+ geom_bar(stat = "identity", fill = "steelblue") +
+ coord_flip() +
+ theme_minimal() +
+ labs(
+   title = "Top 20 Countries by Weighted Degree Centrality & Betweenness Centrality",
+   subtitle = "Reflecting actual communication capacity",
+   x = "Country",
+   y = "Weighted Degree"
+ ) +
+ theme(
+   plot.title = element_text(size = 11, face = "bold"),
+   plot.subtitle = element_text(size = 10, face = "italic"),
+   axis.text = element_text(size = 10)
+ )
+
+# Bar plot for Betweenness Centrality
+p2 <- ggplot(top_20_betweenness, aes(x = reorder(country, betweenness), y = betweenness)) +
+ geom_bar(stat = "identity", fill = "darkgreen") +
+ coord_flip() +
+ theme_minimal() +
+ labs(
+   title = " ",
+   subtitle = "Identifying key transit points",
+   x = "Country",
+   y = "Betweenness"
+ ) +
+ theme(
+   plot.title = element_text(size = 12, face = "bold"),
+   plot.subtitle = element_text(size = 10, face = "italic"),
+   axis.text = element_text(size = 10)
+ )
+
+# Display plots side by side
+grid.arrange(p1, p2, ncol = 2)
+
+```
+
+Fig.4.Top 20 Countries by Weighted Degree Centrality & Betweenness Centrality
+
+## 4.3 Community dectation
+
+Community detection can help identify key nodes and potential weak areas in the network, while revealing whether there is a clustering effect of geographical areas in the network. For example, with community detection, we can find out whether certain geographic regions form independent connected groups. A community may be more vulnerable in the network if it is isolated and has fewer connecting paths with other communities. Once a break occurs, the whole community may be at risk of communication disruption.
+
+In this study, a community detection analysis of the submarine cable network using the Fast Greedy algorithm revealed a unique community structure with a modularity score of 0.5176, which indicates the presence of a clustering pattern in the network. The algorithm divides the network into seven different communities of various sizes, each ranging from 5 to 40 countries.
+
+What I find particularly interesting is that these communities are not determined by geographic proximity alone. While countries in the same region often belong to the same community, as shown by the Asian and European clusters, there are also links that transcend purely geographical boundaries. This indicates that factors such as economic ties, historical relations and strategic partnerships play a crucial role in shaping the structure of submarine cable networks[@ganz_submarine_2024].
+
+From the interactive visualization map[Fig.5], it is found that Russia, China and their neighbors form a clear Community (Community 1), showing strong intra-regional connectivity, which may be related to geopolitical and economic links. European countries form the other major Community (Community 2 and Community 3), indicating that network connectivity between European and North American countries is highly concentrated and complex. Landlocked African countries such as Chad and Czechia, shown in gray on the map, do not have subsea cables, and these areas may be the focus of future network expansion. But interestingly, some coastal countries also lack these connections. Chile, for example, currently has no submarine cable connection, but the Humboldt submarine cable, scheduled to be completed by 2026, will connect South America to the Indo-Pacific region[The Humboldt subsea cable](https://www.state.gov/welcoming-the-first-subsea-cable-between-south-america-and-the-indo-pacific-region/). 
+
+The level of connectivity varies across regions, indicating the potential for network expansion. This knowledge may be valuable for network planning and risk assessment, helping to identify where additional connections may be needed to enhance network resilience.
+
+```{r}
+# Community Detection using Fast Greedy method
+communities <- cluster_fast_greedy(network_graph)
+
+# Get modularity score
+modularity_score <- modularity(communities)
+print(paste("Network Modularity Score:", round(modularity_score, 4)))
+
+# Get community sizes
+community_sizes <- sizes(communities)
+print(community_sizes)
+
+# Create a data frame with community assignments
+community_df <- data.frame(
+  country = V(network_graph)$name,
+  community = communities$membership
+) %>%
+  arrange(community)
+
+
+```
+when joining the "name" column in the world dataset with the "country" column in community_df, many countries did not match. This inconsistency in country names led to missing data in the subsequent analysis. Therefore, the country names in the world dataset were adjusted to match the format used in the original submarine cable data.
+```{r}
+world_communities <- world %>%
+  mutate(
+    join_name = case_when(
+      # Basic name variations
+      name == "South Korea" ~ "Korea, South",
+      name == "Antigua and Barb." ~ "Antigua & Barbuda",
+      name == "St. Vin. and Gren." ~ "St Vincent & the Grenadines",
+      name == "Eq. Guinea" ~ "Equatorial Guinea",
+      name == "Trinidad and Tobago" ~ "Trinidad & Tobago",
+      name == "United States of America" ~ "United States",
+      name == "Myanmar" ~ "Burma",
+      name == "São Tomé and Principe" ~ "Sao Tome & Principe",
+      name == "Bahamas" ~ "Bahamas, The",
+      name == "Gambia" ~ "Gambia, The",
+      name == "Dominican Rep." ~ "Dominican Republic",
+      name == "W. Sahara" ~ "Western Sahara",
+      name == "Côte d'Ivoire" ~ "Cote d'Ivoire",
+      name == "Bosnia and Herz." ~ "Bosnia and Herzegovina",
+      name == "Dem. Rep. Congo" ~ "Congo, Dem Rep of the",
+      name == "Congo" ~ "Congo, Rep of the",
+      name == "Solomon Is." ~ "Solomon Is",
+      name == "St. Kitts and Nevis" ~ "St Kitts & Nevis",
+      name == "Micronesia" ~ "Micronesia, Fed States of",
+      name == "Saint Lucia" ~ "St Lucia",
+      
+      # Default: keep original name
+      TRUE ~ name
+    )
+  ) %>%
+  left_join(community_df, by = c("join_name" = "country"))
+
+# Final check of matching status
+matched_count <- world_communities %>%
+  filter(!is.na(community)) %>%
+  nrow()
+
+print(paste("Final number of countries successfully matched:", matched_count))
+
+# Check if any countries remain unmatched
+unmatched_from_community <- community_df$country[!community_df$country %in% world_communities$join_name]
+if(length(unmatched_from_community) > 0) {
+  print("Countries still unmatched:")
+  print(unmatched_from_community)
+} else {
+  print("All countries successfully matched!")
+}
+```
+
+```{r}
+# Visualize communities
+# Network visualization
+library(ggraph)
+set.seed(123)  # For reproducibility
+plot_communities <- ggraph(network_graph, layout = "fr") +
+  geom_edge_link(aes(width = weight), alpha = 0.2) +
+  geom_node_point(aes(color = as.factor(communities$membership)), size = 3) +
+  geom_node_text(aes(label = name), repel = TRUE, size = 3) +
+  theme_void() +
+  labs(
+    title = "Submarine Cable Network Communities (Fast Greedy)",
+    subtitle = paste("Modularity Score:", round(modularity_score, 4)),
+    color = "Community"
+  )
+```
+
+
+```{r}
+# Install required packages if not already installed
+# install.packages(c("leaflet", "rgdal"))
+
+library(leaflet)
+library(sf)
+
+# Convert the world_communities to a format compatible with leaflet
+# Ensure the CRS is WGS84
+world_communities <- st_transform(world_communities, 4326)
+
+# Create color palette
+n_communities <- length(unique(na.omit(world_communities$community)))
+pal <- colorFactor(
+  palette = "Blues",
+  reverse = TRUE,
+  domain = as.factor(world_communities$community)
+)
+
+# Create title and source HTML
+title_html <- paste0(
+  "<h3 style='text-align: center;'>Geographic Distribution of Submarine Cable Network Communities</h3>",
+  "<h4 style='text-align: center;'>Community Detection Analysis using Fast Greedy Algorithm</h4>",
+  "<h5 style='text-align: center;'>Modularity Score: ", round(modularity_score, 4), "</h5>"
+)
+
+source_html <- paste0(
+  "<p style='font-size: 12px;'>",
+  "Source: TeleGeography's Submarine Cable Map<br>",
+  "Coordinate System: WGS 84<br>",
+  "Note: Gray areas indicate countries not connected to the network",
+  "</p>"
+)
+
+# Create interactive map
+leaflet(world_communities) %>%
+  # Add base tiles
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  
+  # Add title
+  addControl(
+    html = title_html,
+    position = "topright",
+    className = "map-title"
+  ) %>%
+  
+  # Add source information
+  addControl(
+    html = source_html,
+    position = "bottomleft",
+    className = "map-source"
+  ) %>%
+  
+  # Add polygons with interactive features
+  addPolygons(
+    fillColor = ~pal(as.factor(community)),
+    weight = 1,
+    opacity = 1,
+    color = "gray",
+    fillOpacity = 0.7,
+    highlight = highlightOptions(
+      weight = 2,
+      color = "#666",
+      fillOpacity = 0.7,
+      bringToFront = TRUE
+    ),
+    label = ~paste0(
+      name, 
+      ifelse(is.na(community), 
+             ": Not in network", 
+             paste0(": Community ", community))
+    ),
+    labelOptions = labelOptions(
+      style = list("font-weight" = "normal", padding = "3px 8px"),
+      textsize = "15px",
+      direction = "auto"
+    )
+  ) %>%
+  
+  # Add legend
+  addLegend(
+    position = "bottomright",
+    pal = pal,
+    values = as.factor(world_communities$community),
+    title = "Network Communities",
+    opacity = 0.7,
+    na.label = "Not in network"
+  ) %>%
+  
+  # Set view to show the whole world
+  setView(lng = 0, lat = 20, zoom = 2) %>%
+  
+  # Add CSS for styling
+  htmlwidgets::onRender("
+    function(el, x) {
+      var titles = document.getElementsByClassName('map-title');
+      for (var i = 0; i < titles.length; i++) {
+        titles[i].style.backgroundColor = 'rgba(255,255,255,0.8)';
+        titles[i].style.padding = '10px';
+        titles[i].style.borderRadius = '5px';
+        titles[i].style.margin = '10px';
+      }
+      
+      var sources = document.getElementsByClassName('map-source');
+      for (var i = 0; i < sources.length; i++) {
+        sources[i].style.backgroundColor = 'rgba(255,255,255,0.8)';
+        sources[i].style.padding = '5px';
+        sources[i].style.borderRadius = '5px';
+        sources[i].style.margin = '5px';
+      }
+    }")
+```
+
+Fig.5.Interactive Map of Submarine Cable Network Communities
+
+## 4.4 Network vulnerability analysis
+
+A vulnerability analysis was conducted by simulating two node removal strategies based on degree and betweenness centrality, revealing how the network responds when key countries' connections are disrupted.
+
+In this study, the changes in network connected components and relative average transmission distance caused by proportionally removing nodes were recalculated[Fig.6](figure/6.png). When nodes with high betweenness centrality (blue line) fail, the number of connected components in the network increases rapidly. By the time 25% of nodes are removed, the network reaches about 40 components, indicating that the network has been divided into more isolated groups. This demonstrates a significant level of network disruption and reveals a clear vulnerability in the network structure. This indicates that quickly removing highly connected countries will make communication between the remaining countries much more difficult. In contrast, when nodes with high degree centrality (green line) fail, the network is still able to maintain good connectivity. When 50% of the nodes are removed, the number of components peaks at around 35.
+
+```{r warning=FALSE}
+# analyze notwork breakdown
+analyze_network_breakdown <- function(g, removal_method = c("degree", "betweenness")) {
+  results <- data.frame()
+  g_copy <- g
+  n_nodes <- vcount(g)
+  
+  # Get nodes order based on centrality
+  if(removal_method == "degree") {
+    nodes_order <- names(sort(degree(g), decreasing = TRUE))
+  } else {
+    nodes_order <- names(sort(betweenness(g), decreasing = TRUE))
+  }
+  
+  # Add initial state
+  components_count <- components(g_copy)$no
+  avg_path <- mean_distance(g_copy)
+  
+  results <- rbind(results, data.frame(
+    node_name = "Initial Network",
+    percent_removed = 0,
+    n_components = components_count,
+    avg_distance = avg_path,
+    method = removal_method
+  ))
+  
+  # Remove nodes sequentially
+  for(i in 1:length(nodes_order)) {
+    current_node <- nodes_order[i]
+    g_copy <- delete_vertices(g_copy, current_node)
+    
+    # Calculate metrics after removal
+    components_count <- components(g_copy)$no
+    
+    # Safely calculate average path length
+    if(is_connected(g_copy)) {
+      avg_path <- mean_distance(g_copy)
+    } else {
+      comps <- decompose(g_copy)
+      if(length(comps) > 0) {
+        comp_sizes <- sapply(comps, vcount)
+        largest_comp <- comps[[which.max(comp_sizes)]]
+        if(vcount(largest_comp) > 1) {
+          avg_path <- mean_distance(largest_comp)
+        } else {
+          avg_path <- NA
+        }
+      } else {
+        avg_path <- NA
+      }
+    }
+    
+    results <- rbind(results, data.frame(
+      node_name = current_node,
+      percent_removed = i/n_nodes * 100,
+      n_components = components_count,
+      avg_distance = avg_path,
+      method = removal_method
+    ))
+  }
+  
+  return(results)
+}
+
+# Generate results once to be used by both plots
+degree_results <- analyze_network_breakdown(network_graph, "degree")
+betweenness_results <- analyze_network_breakdown(network_graph, "betweenness")
+all_results <- rbind(degree_results, betweenness_results)
+
+# Create improved plots
+p1 <- ggplot(all_results, aes(x = percent_removed, y = n_components, 
+                             color = method, linetype = method)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = c("steelblue", "darkgreen")) +
+  scale_linetype_manual(values = c("solid", "solid")) +
+  labs(x = "Percentage of Nodes Removed",
+       y = "Number of Components",
+       color = "Centrality Measure",
+       linetype = "Centrality Measure") +
+  theme_minimal()
+
+p2 <- ggplot(all_results, aes(x = percent_removed, y = avg_distance, 
+                             color = method, linetype = method)) +
+  geom_line(size = 1) +
+  scale_color_manual(values = c("steelblue", "darkgreen")) +
+  scale_linetype_manual(values = c("solid", "solid")) +
+  labs(x = "Percentage of Nodes Removed",
+       y = "Average Path Length",
+       color = "Centrality Measure",
+       linetype = "Centrality Measure") +
+  theme_minimal()
+
+# Combine plots
+grid.arrange(p1, p2, ncol = 2,
+             top = "Network Resilience Analysis:\nImpact of Node Removal on Network Structure")
+```
+
+Fig.6.Network Resilience Analysis:\nImpact of Node Removal on Network Structure
+
+Based on the changes in network connected components caused by the removal of nodes one by one [Fig.7](figure/7.png). In the left figure, if the nodes representing France, South Africa, and the United States fail, the number of connected components in the network will increase rapidly, significantly threatening the connectivity of the entire submarine cable network. Therefore, these three countries are particularly crucial for maintaining the connectivity of the network. In the right figure, based on betweenness centrality, the three countries identified are the United States, Italy, and the Netherlands. If these nodes fail, the number of connected components will increase sharply, indicating that while these countries may not have many direct connections, they play an important role as bridges within the network.
+
+
+```{r warning=FALSE}
+# Generate Network Components Change plot
+plot_components_change <- function(degree_results, betweenness_results) {
+  p1 <- ggplot() +
+    geom_line(data = degree_results[1:11,], 
+              aes(x = factor(node_name, levels = node_name), y = n_components, group = 1)) +
+    geom_point(data = degree_results[1:11,], 
+               aes(x = factor(node_name, levels = node_name), y = n_components)) +
+    scale_y_continuous(limits = c(0, 7)) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "a. Degree Centrality Based Removal",
+         x = "Node Removal Sequence",
+         y = "Number of Components")
+  
+  p2 <- ggplot() +
+    geom_line(data = betweenness_results[1:11,], 
+              aes(x = factor(node_name, levels = node_name), y = n_components, group = 1)) +
+    geom_point(data = betweenness_results[1:11,], 
+               aes(x = factor(node_name, levels = node_name), y = n_components)) +
+    scale_y_continuous(limits = c(0, 7)) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(title = "b. Betweenness Centrality Based Removal",
+         x = "Node Removal Sequence",
+         y = "Number of Components")
+  
+  grid.arrange(p1, p2, ncol = 2, 
+               top = "Network Components Change with Node Removal")
+}
+
+
+
+# For Network Components Change:
+plot_components_change(degree_results, betweenness_results)
+```
+
+Fig.7.Network Components Change with Node Removal
+
+# 5. Discussion
+
+## 5.1 Challenges and Opportunities in Submarine Cable Network Development
+
+From the above analysis, it can be concluded that the global submarine cable network faces significant challenges. Centrality analysis and vulnerability analysis show that major countries such as France and the United States have a large number of cable connections, and the network will become over-dependent on these key countries, and this connection will actually increase the network vulnerability. When these highly connected nodes fail, the number of connected components in the network increases rapidly, indicating severe disruptions in global connectivity.
+
+While there are many more cables under construction, such as the Humboldt submarine cable, the real question is whether these developments are really addressing the structural imbalances in the global network, and will they exacerbate existing patterns of digital inequality? For example, while Europe benefits from dense cable coverage and fast data transmission, many developing regions must route their communications through distant hubs, resulting in higher costs and potential delays. Finding ways to maintain the efficiency of the main communication centers while developing more distributed regional networks to ensure reliable access and network resilience for all regions is an important challenge.
+
+## 5.2 Research Limitations
+
+Although this study provides insights into the structure of global submarine cable networks, some limitations should be acknowledged. The 2024 data in the study may not fully capture the cables under construction. The source of the country border data is not precise enough, because the number of missing values in the spatial connection process accounts for 12.2% of the total landing points. Moreover, the analysis in this paper focuses only on geographical distribution and connectivity patterns, while technical parameters such as cable capacity and transmission speed are equally important, which can provide more insight into network performance.
+
+
+---
+# 6. Word Count
+
+```{r word_count, echo=FALSE}
+library(stringi)
+
+# Specify file path
+file_path <- "Submarine cables network.Rmd"  
+
+if (file.exists(file_path)) {
+  # Read file
+  rmd <- readLines(file_path)
+  
+  # Remove YAML header
+  yaml_delim <- grep("^---", rmd)
+  if (length(yaml_delim) >= 2) {
+    rmd <- rmd[-(yaml_delim[1]:yaml_delim[2])]
+  }
+  
+  # Find code blocks
+  code_blocks <- grep("^```", rmd)
+  text_only <- rmd
+  
+  if (length(code_blocks) > 0) {
+    # Create start and end indices in pairs
+    starts <- code_blocks[seq(1, length(code_blocks), 2)]
+    ends <- code_blocks[seq(2, length(code_blocks), 2)]
+    
+    # Remove code blocks
+    for (i in rev(seq_along(starts))) {
+      text_only <- text_only[-(starts[i]:ends[i])]
+    }
+  }
+  
+  # Combine text and count words
+  text <- paste(text_only, collapse = " ")
+  word_count <- stri_count_words(text)
+  
+  cat("Total word count (excluding code blocks):", word_count)
+} else {
+  cat("File not found. Please check the file path.")
+}
+```
